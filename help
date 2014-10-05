@@ -1,0 +1,4 @@
+Build:./build.sh
+Start: pk2cmd -PPIC16F690 -A4 -T
+Stop: pk2cmd -PPIC16F690 -W
+
