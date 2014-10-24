@@ -198,18 +198,29 @@ Cal_Test
 	btfsc	BUTTON
 	return
 
-	BANKSEL	SSPCON
-	BCF	SSPCON,SSPEN	; Disable SPI
-	BCF	STATUS,RP0
-	BCF	STATUS,RP1	; Bank 0
+	btfsc	CalStatus,1
+	goto	Cal_Stop
 
-	btfss	CalStatus,0
-	goto	Calibrate1
+	btfsc	CalStatus,0
 	goto	Calibrate2
+
+	goto	Calibrate1
+
+Cal_Stop
+	bsf	CalStatus,2	; Next: Exit to normal...
+	return
+
+Cal_Exit
+	clrf	CalStatus
+	call	StatusLEDOff
+	return
 
 Calibrate1
 	bsf	CalStatus,0	; Next: cal2
 	call	Cal_Test	; Check button again
+	btfsc	CalStatus,2	; Exit?
+	goto	Cal_Exit	; Yes!
+
 	call	StatusLEDOn
 	btfss	OPTIC1
 	goto	Calibrate1
@@ -225,8 +236,11 @@ Calibrate1
 	goto	Calibrate1
 
 Calibrate2
-	bcf	CalStatus,0	; Next: cal1
+	bsf	CalStatus,1	; Next: exit
 	call	Cal_Test	; Check button again
+	btfsc	CalStatus,2	; Exit?
+	goto	Cal_Stop	; Yes!
+
 	call	StatusLEDOn
 	btfss	OPTIC2
 	goto	Calibrate2
