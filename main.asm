@@ -1,35 +1,49 @@
-; PICkit 2 Lesson 1 - 'Hello World'
-;
+; Weight Stack Counter
 #include <p16F690.inc>
 	__config (_INTRC_OSC_NOCLKOUT & _WDT_OFF & _PWRTE_OFF & _MCLRE_OFF & _CP_OFF & _BOD_OFF & _IESO_OFF & _FCMEN_OFF)
-	
-	CBLOCK	0x20 ;start of general purpose registers
+;	__config (_FOSC_HS & _WDT_OFF & _PWRTE_OFF & _MCLRE_OFF & _CP_OFF & _BOD_OFF & _IESO_OFF & _FCMEN_OFF)
+
+	CBLOCK	0x20	; Start of general purpose registers
 Delay1
 Delay2
-Level
-Turner
+Level			; Weight counter
+LevelSPI		; To be sent via SPI
+Turner			; What direction
+WaitFor			; What to wait for
+CalStatus		; Which sensor to calibrate
 	ENDC
 
-; LED mappings
-DSG	EQU	D'0'
-DSF	EQU	D'1'
-DSA	EQU	D'2'
-DSB	EQU	D'3'
-DSE	EQU	D'4'
-DSD	EQU	D'5'
-DSC	EQU	D'4'
+; Optic Sensor Mappings
+#define	OPTIC1	PORTC,4
+#define	OPTIC2	PORTC,5
+#define	OPTICT1	TRISC,4
+#define	OPTICT2	TRISC,5
 
-; Hard coded turn point
-NSTACK	EQU	D'4'
+; Magnetic Sensor Mappings
+#define	MAGN1	PORTC,1
+#define	MAGNT1	TRISC,1
+
+; SPI TRIS Mappings
+#define SPI_SCK	TRISB,6
+#define SPI_SDI	TRISB,4
+#define SPI_SDO	TRISC,7
+#define SPI_SS	TRISC,6
+
+; Status LED
+#define ST_LED	PORTC,0
+#define ST_LEDT	TRISC,0
+
+; Button
+#define BUTTON	PORTB,7
+#define BUTTONT	TRISB,7
 
 	org 0
-	GOTO	Start
-	
-; +---------------+
-; | DELAY ROUTINE |
-; +---------------+
-DELAY
-	MOVLW	d'4'
+	goto	Start
+
+; Delay Functions
+; ---------------
+Delay
+	MOVLW	d'6'		; 4 MHz: 4
 	MOVWF	Delay1
 	MOVWF	Delay2
 Loop1	DECFSZ	Delay1,F
@@ -38,8 +52,28 @@ Loop1	DECFSZ	Delay1,F
 Loop2	DECFSZ	Delay2,F
 	GOTO	Loop2
 	GOTO	Loop1
-; - END DELAY -
 
+SensorDelay
+	MOVLW	d'35'		; 4 MHz: 25
+	MOVWF	Delay1
+	MOVWF	Delay2
+LLoop1	DECFSZ	Delay1,F
+	GOTO	LLoop2
+	RETURN
+LLoop2	DECFSZ	Delay2,F
+	GOTO	LLoop2
+	GOTO	LLoop1
+LongDelay
+	MOVLW	d'150'
+	MOVWF	Delay1
+	MOVWF	Delay2
+BLoop1	DECFSZ	Delay1,F
+	GOTO	BLoop2
+	RETURN
+BLoop2	DECFSZ	Delay2,F
+	GOTO	BLoop2
+	GOTO	BLoop1
+; End Delay
 
 Start	BCF	STATUS,RP0
 	BCF	STATUS,RP1	; Bank 0
@@ -47,142 +81,230 @@ Start	BCF	STATUS,RP0
 	CLRF	PORTB
 	CLRF	PORTC
 
-	BANKSEL	ANSEL
+	BANKSEL	ANSEL		; Do not use AD converter
 	CLRF	ANSEL
 
 	BSF	STATUS,RP0
 	BCF	STATUS,RP1	; Bank 1
 
-	MOVLW 	b'00000000'
-	MOVWF	TRISC		; Set PortC all outputs
-	MOVWF	TRISB		; Set PortB all outputs
-   	MOVLW 	b'11111111'
-	MOVWF	TRISA		; Set PortA all inputs
+	; Sensor Pin Setup
+	BSF	OPTICT1		; Optic sensor 1 input
+	BSF	OPTICT2		; Optic sensor 2 input
+	BSF	MAGNT1		; Magnetic sensor 1 input
 
-	BCF	STATUS,RP0	; Bank 0
+	; SPI Pin Setup
+	BSF	SPI_SCK		; SPI Clock: Input (as slave)
+	BSF	SPI_SDI		; SPI Digital Input
+	BCF	SPI_SDO		; SPI Digital Output
+	BSF	SPI_SS		; SPI Slave Select: Input
+	
+	; Status LED Setup
+	BCF	ST_LEDT		; Status LED: output
 
+	; Button Setup
+	BSF	BUTTONT		; Button: input
+
+	BANKSEL	SSPSTAT
+	BCF	SSPSTAT,SMP
+	BCF	SSPSTAT,CKE
+
+	BANKSEL	SSPCON
+	BCF	SSPCON,CKP	; Clock Polarity, idle low
+	BSF	SSPCON,2	; SPI Slave Mode, SS Enabled
+	BSF	SSPCON,SSPEN
+
+	BCF	STATUS,RP0	; Bank 1
+	BCF	STATUS,RP1
 	CLRF	Turner
+	CLRF	WaitFor
+	CLRF	Level
+	CLRF	LevelSPI
+	clrf	CalStatus
+
 	BSF	Turner,0
 	SWAPF	Turner,1
-	
-	CLRF	Level
+
+Check	call	SPI_Test
+	call	Cal_Test
+	BTFSS	Turner,0
+	GOTO	Upp
+	GOTO	Ner
+
+Upp	CALL	CheckEnd
+	CALL	CheckU
 	GOTO	Check
 
+Ner	CALL	CheckStart
+	CALL	CheckD
+	GOTO	Check
 
-Check	CALL	ShowLvl
-	BTFSS	Turner,0
-	GOTO	CheckU
-	GOTO	CheckD
+CheckStart
+	BTFSS	OPTIC1
+	return
+	BTFSC	OPTIC2
+	return
+	CALL	SensorDelay
+	BTFSS	OPTIC1
+	return
+	BTFSC	OPTIC2
+	return
+	CALL	Turn
+	call	StatusLEDOn
+	return
+	
+CheckEnd
+	BTFSS	OPTIC2
+	return
+	BTFSC	OPTIC1
+	return
+	CALL	SensorDelay
+	BTFSS	OPTIC2
+	return
+	BTFSC	OPTIC1
+	return
+	CALL	Turn
+	call	StatusLEDOff
+	return
+
+; SPI Transfer
+; ------------
+SPI_Test
+	movlw	SSPSTAT
+	movwf	FSR
+	btfss	INDF,BF
+	return
+	
+	BANKSEL	SSPBUF
+	movf	SSPBUF,W
+	movf	LevelSPI,W  ; should be levelSPI
+	movwf	SSPBUF
+	clrf	LevelSPI
+	return
+	
+; Check Calibration Button
+; ------------------------
+Cal_Test
+	btfss	BUTTON
+	return
+	call	SensorDelay
+	btfss	BUTTON
+	return
+	call	SensorDelay
+	btfss	BUTTON
+	return
+	btfsc	BUTTON		; Wait for release...
+	goto	$-1
+	call	SensorDelay
+	btfsc	BUTTON
+	return
+
+	BANKSEL	SSPCON
+	BCF	SSPCON,SSPEN	; Disable SPI
+	BCF	STATUS,RP0
+	BCF	STATUS,RP1	; Bank 0
+
+	btfss	CalStatus,0
+	goto	Calibrate1
+	goto	Calibrate2
+
+Calibrate1
+	bsf	CalStatus,0	; Next: cal2
+	call	Cal_Test	; Check button again
+	call	StatusLEDOn
+	btfss	OPTIC1
+	goto	Calibrate1
+	btfsc	OPTIC2
+	goto	Calibrate1
+	call	SensorDelay
+	btfss	OPTIC1
+	goto	Calibrate1
+	btfsc	OPTIC2
+	goto	Calibrate1
+	call	StatusLEDOff
+	call	LongDelay
+	goto	Calibrate1
+
+Calibrate2
+	bcf	CalStatus,0	; Next: cal1
+	call	Cal_Test	; Check button again
+	call	StatusLEDOn
+	btfss	OPTIC2
+	goto	Calibrate2
+	btfsc	OPTIC1
+	goto	Calibrate2
+	call	SensorDelay
+	btfss	OPTIC2
+	goto	Calibrate2
+	btfsc	OPTIC1
+	goto	Calibrate2
+	call	StatusLEDOff
+	call	LongDelay
+	goto	Calibrate2
 
 ; Check up
 ; --------
-CheckU	BTFSS	PORTA,4		; Wait for movement...
-	GOTO	CheckU
-	CALL	DELAY
-	BTFSS	PORTA,4
-	GOTO	CheckU
-CheckU2	BTFSC	PORTA,4		; Wait for movement...
+CheckU	BTFSC	WaitFor,0	; What to wait for
 	GOTO	CheckU2
-	CALL	DELAY
-	BTFSC	PORTA,4
-	GOTO	CheckU2
-	GOTO	TickUp
+	BTFSS	MAGN1
+	return
+	CALL	Delay
+	BTFSS	MAGN1
+	return
+	BSF	WaitFor,0	; Change WaitFor
+	return
+CheckU2	BTFSC	MAGN1
+	return
+	CALL	Delay
+	BTFSC	MAGN1
+	return
+	BCF	WaitFor,0	; Change WaitFor
+	CALL	TickUp
+	return
 
 ; Check down
 ; ----------	
-CheckD	BTFSC	PORTA,4		; Wait for movement...
-	GOTO	CheckD
-	CALL	DELAY
-	BTFSC	PORTA,4
-	GOTO	CheckD
-CheckD2	BTFSS	PORTA,4		; Wait for movement...
+CheckD	BTFSC	WaitFor,0	; What to wait for
 	GOTO	CheckD2
-	CALL	DELAY
-	BTFSS	PORTA,4
-	GOTO	CheckD2
-	GOTO	TickDown
+	BTFSC	MAGN1
+	return
+	CALL	Delay
+	BTFSC	MAGN1
+	return
+	BSF	WaitFor,0	; Change WaitFor
+	return
+CheckD2	BTFSS	MAGN1
+	return
+	CALL	Delay
+	BTFSS	MAGN1
+	return
+	BCF	WaitFor,0	; Change WaitFor
+	CALL	TickUp
+	return
 
 ; Tick Up
 ; -------
-TickUp	INCF	Level,1
-	MOVF	Level,0		; Move Level to W
-	XORLW	NSTACK
-	BTFSC	STATUS,Z
-	CALL	Turn
-	GOTO	Check
+TickUp	incf	Level,1
+	return
+
+; Turn
+; ----
+Turn	swapf	Turner,1
+	movf	LevelSPI,1
+	btfss	STATUS,Z
+	return
+	movf	Level,0
+	movwf	LevelSPI	; Only move if LevelSPI is zero? (todo)
+	clrf	Level
+	return
 	
-; Tick Down
-; ---------
-TickDown
-	DECFSZ	Level,1
-	GOTO	Check
-	CALL	Turn
-	GOTO	Check
-
-Turn	SWAPF	Turner,1
-	RETURN
-
-; Display the Level reg. 
-; ----------------------
-ShowLvl	CLRF	PORTC		; Clear display
-	CLRF	PORTB
-	MOVF	Level,0		; Test: 4
-	XORLW	D'4'
-	BTFSC	STATUS,Z
-	GOTO	Show4
-	MOVF	Level,0		; Test: 3
-	XORLW	D'3'
-	BTFSC	STATUS,Z
-	GOTO	Show3
-	MOVF	Level,0		; Test: 2
-	XORLW	D'2'
-	BTFSC	STATUS,Z
-	GOTO	Show2
-	MOVF	Level,0		; Test: 1
-	XORLW	D'1'
-	BTFSC	STATUS,Z
-	GOTO	Show1
-	GOTO	Show0		; Show 0
-ShowLvlRet
-	RETURN
-
-; Show numbers
-; ------------
-ShowN	CLRF	PORTC
-	GOTO	ShowLvlRet
-Show0	MOVLW	b'11111111'
-	MOVWF	PORTC
-	BCF	PORTC,DSG
-	BSF	PORTB,DSC
-	GOTO	ShowLvlRet
-Show1
-	BSF	PORTC,DSB
-	BSF	PORTB,DSC
-	GOTO	ShowLvlRet
-Show2
-	BSF	PORTC,DSA
-	BSF	PORTC,DSB
-	BSF	PORTC,DSG
-	BSF	PORTC,DSE
-	BSF	PORTC,DSD
-	GOTO	ShowLvlRet
-Show3
-	BSF	PORTC,DSA
-	BSF	PORTC,DSB
-	BSF	PORTB,DSC
-	BSF	PORTC,DSG
-	BSF	PORTC,DSD
-	GOTO	ShowLvlRet
-Show4
-	BSF	PORTC,DSB
-	BSF	PORTB,DSC
-	BSF	PORTC,DSG
-	BSF	PORTC,DSF
-	GOTO	ShowLvlRet
-Show7
-	BSF	PORTC,DSA
-	BSF	PORTC,DSB
-	BSF	PORTC,DSC
-	GOTO	ShowLvlRet
+; Status LED Operations
+; ---------------------
+StatusLEDOn
+	bsf	ST_LED
+	return
+	
+StatusLEDOff
+	bcf	ST_LED
+	return
 
 	end
