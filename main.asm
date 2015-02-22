@@ -119,13 +119,13 @@ Start	BCF	STATUS,RP0
 	CLRF	WaitFor
 	CLRF	Level
 	CLRF	LevelSPI
-	clrf	CalStatus
+	CLRF	CalStatus
 
 	BSF	Turner,0
 	SWAPF	Turner,1
 
-Check	call	SPI_Test
-	call	Cal_Test
+Check	CALL	SPI_Test
+	CALL	Cal_Test
 	BTFSS	Turner,0
 	GOTO	Upp
 	GOTO	Ner
@@ -176,9 +176,27 @@ SPI_Test
 	
 	BANKSEL	SSPBUF
 	movf	SSPBUF,W
-	movf	LevelSPI,W  ; should be levelSPI
+	movf	LevelSPI,W
 	movwf	SSPBUF
 	clrf	LevelSPI
+	return
+
+; SPI Transfer
+; ------------
+SPI_Test2 ; No clear of LevelSPI buf
+	movlw	SSPSTAT
+	movwf	FSR
+	btfss	INDF,BF
+	return
+	
+	; Calibration time...
+	movlw	d'121'
+	movwf	LevelSPI
+
+	BANKSEL	SSPBUF
+	movf	SSPBUF,W
+	movf	LevelSPI,W
+	movwf	SSPBUF
 	return
 	
 ; Check Calibration Button
@@ -216,6 +234,7 @@ Cal_Exit
 	return
 
 Calibrate1
+	call	SPI_Test2
 	bsf	CalStatus,0	; Next: cal2
 	call	Cal_Test	; Check button again
 	btfsc	CalStatus,2	; Exit?
@@ -236,6 +255,7 @@ Calibrate1
 	goto	Calibrate1
 
 Calibrate2
+	call	SPI_Test2
 	bsf	CalStatus,1	; Next: exit
 	call	Cal_Test	; Check button again
 	btfsc	CalStatus,2	; Exit?
